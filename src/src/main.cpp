@@ -52,7 +52,7 @@ vector<TriangleP> geometryProcess(const vector<Triangle>& triangles,
 {
 	// vertex process1: modelSpace -> clipSpace
 	size_t totalTriangles = triangles.size();
-	vector<TriangleP> TrianglePs(totalTriangles);
+	vector<TriangleP> clipTriangles(totalTriangles);
 	for(size_t i =0;i< totalTriangles; i++)
 	{
 		const Triangle& triangle = triangles[i];
@@ -63,8 +63,8 @@ vector<TriangleP> geometryProcess(const vector<Triangle>& triangles,
 			vec4 mvpPos = p * v * m * vec4(pos, 1.0f);
 
 			// copy attribute
-			TrianglePs[i].vertices[j].position = mvpPos;
-			TrianglePs[i].vertices[j].color = triangle.vertices[j].color;
+			clipTriangles[i].vertices[j].position = mvpPos;
+			clipTriangles[i].vertices[j].color = triangle.vertices[j].color;
 		}
 	}
 
@@ -75,9 +75,9 @@ vector<TriangleP> geometryProcess(const vector<Triangle>& triangles,
 	for(size_t i = 0;i < totalTriangles;i++)
 	{
 		array<VertexP, Clipper<VertexP>::MAX_OUTPUT_CLIPPED_POINT> clipVertices = {};
-		const TriangleP& TriangleP = TrianglePs[i];
+		const TriangleP& clipTriangle = clipTriangles[i];
 
-		const size_t verticesCount = clipper.clipTriangle(&TriangleP.vertices[0], &clipVertices[0]);
+		const size_t verticesCount = clipper.clipTriangle(&clipTriangle.vertices[0], &clipVertices[0]);
 
 		if (verticesCount >= 3 && clippedCount + (verticesCount - 2) > totalClippedCount)
 		{
