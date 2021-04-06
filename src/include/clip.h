@@ -2,6 +2,8 @@
 #include <iostream>
 #include <array>
 
+#include "vertex.h"
+
 template<typename Vertex>
 class Clipper
 {
@@ -17,9 +19,9 @@ public:
 	{
 		if constexpr (W_SIGN)
 		{
-			return vertex.clipPos[AXIS] <= vertex.clipPos.w;
+			return vertex.position[AXIS] <= vertex.position.w;
 		}
-		return vertex.clipPos[AXIS] >= -1 * vertex.clipPos.w;
+		return vertex.position[AXIS] >= -1 * vertex.position.w;
 	}
 
 	template<int AXIS, bool W_SIGN>
@@ -28,17 +30,17 @@ public:
 		float t;
 		if constexpr (W_SIGN)
 		{
-			t = (A.clipPos.w - A.clipPos[AXIS]) / (B.clipPos[AXIS] - B.clipPos.w + A.clipPos.w - A.clipPos[AXIS]);
+			t = (A.position.w - A.position[AXIS]) / (B.position[AXIS] - B.position.w + A.position.w - A.position[AXIS]);
 		}
 		else
 		{
-			t = -1.0f * (A.clipPos.w + A.clipPos[AXIS]) / (B.clipPos[AXIS] - A.clipPos[AXIS] + B.clipPos.w - A.clipPos.w);
+			t = -1.0f * (A.position.w + A.position[AXIS]) / (B.position[AXIS] - A.position[AXIS] + B.position.w - A.position.w);
 		}
 		return t;
 	}
 
 	template<int AXIS, bool W_SIGN>
-	size_t ClipPolygonWithPlane(Vertex* inVertices, size_t inCount, Vertex* outVertices)
+	size_t clipPolygonWithPlane(Vertex* inVertices, size_t inCount, Vertex* outVertices)
 	{
 		size_t outCount = 0;
 		Vertex A = inVertices[0];
@@ -54,7 +56,7 @@ public:
 			if (isAIn ^ isBIn)
 			{
 				float t = computeParamT<AXIS, W_SIGN>(A, B);
-				outVertices[outCount++] = Vertex::Interpolate(A, B, t);
+				outVertices[outCount++] = interpolate<Vertex>(A, B, t);
 			}
 			A = B;
 			isAIn = isBIn;
@@ -64,13 +66,13 @@ public:
 
 	bool isInner(const Vertex& A)
 	{
-		return abs(A.clipPos.x) <= abs(A.clipPos.w) &&
-			   abs(A.clipPos.y) <= abs(A.clipPos.w) &&
+		return abs(A.position.x) <= abs(A.position.w) &&
+			   abs(A.position.y) <= abs(A.position.w) &&
 			   isInBoundary<AXIS_FLAG::Z, W_SIGN_FLAG::POSITIVE>(A) &&
 			   isInBoundary<AXIS_FLAG::Z, W_SIGN_FLAG::NEGATIVE>(A);
 	}
 
-	size_t ClipTriangle(const Vertex* triangleVertices, Vertex* outputVertices, size_t verticesCount = 3)
+	size_t clipTriangle(const Vertex* triangleVertices, Vertex* outputVertices, size_t verticesCount = 3)
 	{
 		if (TRIANGLE_VERTICES_COUNT != verticesCount)
 		{
@@ -79,21 +81,21 @@ public:
 		
 		if (isInner(triangleVertices[0]) && isInner(triangleVertices[1]) && isInner(triangleVertices[2]))
 		{
-			Vertex::assignData(outputVertices, &triangleVertices[0], 3);
+			assignData<Vertex>(outputVertices, &triangleVertices[0], 3);
 			return  3;
 		}
 		std::array<Vertex, MAX_OUTPUT_CLIPPED_POINT> inVertices = {}, outVertices = {};
-		Vertex::assignData(&inVertices[0], &triangleVertices[0], 3);
+		assignData<Vertex>(&inVertices[0], &triangleVertices[0], 3);
 
-		size_t outCount = 0;
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::X, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  3, &outVertices[0]);
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::X, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::Y, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  outCount, &outVertices[0]);
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::Y, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::Z, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  outCount, &outVertices[0]);
-		outCount = ClipPolygonWithPlane<AXIS_FLAG::Z, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
+		size_t outCount = 3;
+		outCount = clipPolygonWithPlane<AXIS_FLAG::X, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  outCount, &outVertices[0]);
+		outCount = clipPolygonWithPlane<AXIS_FLAG::X, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
+		outCount = clipPolygonWithPlane<AXIS_FLAG::Y, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  outCount, &outVertices[0]);
+		outCount = clipPolygonWithPlane<AXIS_FLAG::Y, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
+		outCount = clipPolygonWithPlane<AXIS_FLAG::Z, W_SIGN_FLAG::POSITIVE>(&inVertices[0],  outCount, &outVertices[0]);
+		outCount = clipPolygonWithPlane<AXIS_FLAG::Z, W_SIGN_FLAG::NEGATIVE>(&outVertices[0], outCount, &inVertices[0]);
 
-		Vertex::assignData(outputVertices, &inVertices[0], outCount);
+		assignData<Vertex>(outputVertices, &inVertices[0], outCount);
 
 		return outCount;
 	}

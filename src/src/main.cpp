@@ -46,11 +46,13 @@ vec3 getBarycentricCoord(const array<vec3, 3>& abc, const vec3& p)
 	return vec3(1 - (cross_z.x + cross_z.y) / cross_z.z, cross_z.x / cross_z.z, cross_z.y / cross_z.z);
 }
 
-vector<Triangle> geometryProcess(const vector<Triangle>& triangles, const mat4& mvp, const int width, const int height)
+vector<TriangleP> geometryProcess(const vector<Triangle>& triangles, 
+								  const mat4& m, const mat4&v, const mat4& p, 
+								  const int width, const int height)
 {
 	// vertex process1: modelSpace -> clipSpace
 	size_t totalTriangles = triangles.size();
-	vector<ClipTriangle> clipTriangles(totalTriangles);
+	vector<TriangleP> TrianglePs(totalTriangles);
 	for(size_t i =0;i< totalTriangles; i++)
 	{
 		const Triangle& triangle = triangles[i];
@@ -58,24 +60,24 @@ vector<Triangle> geometryProcess(const vector<Triangle>& triangles, const mat4& 
 		{
 			// process in vertex shader
 			vec3 pos = triangle.vertices[j].position;
-			vec4 mvpPos = mvp * vec4(pos, 1.0f);
+			vec4 mvpPos = p * v * m * vec4(pos, 1.0f);
 
 			// copy attribute
-			clipTriangles[i].vertices[j].clipPos = mvpPos;
-			clipTriangles[i].vertices[j].color = triangle.vertices[j].color;
+			TrianglePs[i].vertices[j].position = mvpPos;
+			TrianglePs[i].vertices[j].color = triangle.vertices[j].color;
 		}
 	}
 
 	// vertex process2: clipping in clipSpace
-	vector<ClipTriangle> clippedTriangles(totalTriangles);
-	Clipper<ClipVertex> clipper;
+	vector<TriangleP> clippedTriangles(totalTriangles);
+	Clipper<VertexP> clipper;
 	size_t clippedCount = 0, totalClippedCount = totalTriangles;
 	for(size_t i = 0;i < totalTriangles;i++)
 	{
-		array<ClipVertex, Clipper<ClipVertex>::MAX_OUTPUT_CLIPPED_POINT> clipVertices = {};
-		const ClipTriangle& clipTriangle = clipTriangles[i];
+		array<VertexP, Clipper<VertexP>::MAX_OUTPUT_CLIPPED_POINT> clipVertices = {};
+		const TriangleP& TriangleP = TrianglePs[i];
 
-		const size_t verticesCount = clipper.ClipTriangle(&clipTriangle.vertices[0], &clipVertices[0]);
+		const size_t verticesCount = clipper.clipTriangle(&TriangleP.vertices[0], &clipVertices[0]);
 
 		if (verticesCount >= 3 && clippedCount + (verticesCount - 2) > totalClippedCount)
 		{
@@ -91,30 +93,44 @@ vector<Triangle> geometryProcess(const vector<Triangle>& triangles, const mat4& 
 	}
 
 	// vertex process3: clipSpace -> NDC and NDC -> ScreenSpace
-	vector<Triangle> screenTriangles(clippedCount);
+	vector<TriangleP> screenTriangles(clippedCount);
 	for(size_t i =0;i<clippedCount;i++)
 	{
-		const array<ClipVertex, 3> clippedVertices = clippedTriangles[i].vertices;
+		const array<VertexP, 3> clippedVertices = clippedTriangles[i].vertices;
 		for(size_t j=0; j< clippedVertices.size(); j++)
 		{
 			// projection division
-			vec3 position = vec3(clippedVertices[j].clipPos.x, clippedVertices[j].clipPos.y, clippedVertices[j].clipPos.z) / clippedVertices[j].clipPos.w;
+			vec3 position = vec3(clippedVertices[j].position.x, clippedVertices[j].position.y, clippedVertices[j].position.z) / clippedVertices[j].position.w;
 			
 			// screen mapping
-			screenTriangles[i].vertices[j].position = (position + vec3(1.0, 1.0, 1.0)) * vec3(width, height, 1) / 2.0f;
+			position = (position + vec3(1.0, 1.0, 1.0)) * vec3(width, height, 1) / 2.0f;
+
+			screenTriangles[i].vertices[j].position = vec4(position, -clippedVertices[j].position.w);
 			screenTriangles[i].vertices[j].color = clippedVertices[j].color;
 		}
 	}
 	return screenTriangles;
 }
 
-void rasterize(const vector<Triangle>& triangles, FrameBuffer& frameBuffer)
+void rasterize(const vector<TriangleP>& triangles, FrameBuffer& frameBuffer)
 {
 	size_t height = frameBuffer.zBuffer.size(), width = frameBuffer.zBuffer[0].size();
 	for(auto& triangle: triangles)
 	{
-		array<vec3, 3> triPos = {triangle.vertices[0].position, triangle.vertices[1].position, triangle.vertices[2].position };
-		array<int, 4> triBBox = getBBox(triPos, width, height);
+		array<vec3, 3> triPos = {};
+		for (size_t i = 0; i < 3; i++) {
+			triPos[i] = vec3(triangle.vertices[i].position.x, triangle.vertices[i].position.y, triangle.vertices[i].position.z);
+		}
+
+		// perspective correct parameter
+		vec3 pcPV = {
+			triangle.vertices[1].position.w * triangle.vertices[2].position.w,
+			triangle.vertices[0].position.w * triangle.vertices[2].position.w,
+			triangle.vertices[0].position.w * triangle.vertices[1].position.w,
+		};
+		float pcPZ = triangle.vertices[0].position.w * triangle.vertices[1].position.w * triangle.vertices[2].position.w;
+
+		array<int, 4> triBBox = getBBox(triPos, width-1, height-1);
 		for (int y = triBBox[1]; y <= triBBox[3]; y++)
 		{
 			for (int x = triBBox[0]; x <= triBBox[2]; x++)
@@ -123,19 +139,23 @@ void rasterize(const vector<Triangle>& triangles, FrameBuffer& frameBuffer)
 				vec3 baryC = getBarycentricCoord(triPos, p);
 				if (baryC[0] >= 0 && baryC[1] >= 0 && baryC[2] >= 0)
 				{
-					p.z = dot(baryC, vec3(triPos[0].z, triPos[1].z, triPos[2].z));
+					// perspective projection interplote correct
+					vec3 baryCCorrect = (pcPV / dot(pcPV, baryC)) * baryC;
+					p.z = pcPZ / dot(pcPV, baryC);
+
+					// depth test
 					if (p.z < frameBuffer.zBuffer[y][x])
 					{
 						frameBuffer.zBuffer[y][x] = p.z;
-						vec3 color = triangle.vertices[0].color * baryC[0] +
-							triangle.vertices[1].color * baryC[1] +
-							triangle.vertices[2].color * baryC[2];
-						frameBuffer.colorBuffer[y][x] = color;
+						frameBuffer.colorBuffer[y][x] = baryCCorrect[0] * triangle.vertices[0].color +
+							baryCCorrect[1] * triangle.vertices[1].color +
+							baryCCorrect[2] * triangle.vertices[2].color;
 					}
 				}
 			}
 		}
 	}
+	
 }
 
 int main()
@@ -145,20 +165,16 @@ int main()
 	// viewport
 	FrameBuffer frameBuffer;
 	frameBuffer.zBuffer = vector<vector<float>>(height + 1, vector<float>(width + 1, 2));
-	frameBuffer.colorBuffer = vector<vector<vec3>>(height + 1, vector<vec3>(width+1, vec3(0)));
-	
+	frameBuffer.colorBuffer = vector<vector<vec3>>(height + 1, vector<vec3>(width + 1, vec3(0)));
+
 	// data
 	Triangle triangle = {};
-	/*triangle.vertices[0] = { vec3(-4, -3, 0), vec3(1,0,0) };
-	triangle.vertices[1] = { vec3(0, 3, 0), vec3(0,1,0) };
-	triangle.vertices[2] = { vec3(4, -3, 0), vec3(0,0,1) };*/
-
-	triangle.vertices[0] = { vec3(-2, -0.5, 2.5), vec3(1,0,0) };
-	triangle.vertices[1] = { vec3(0, 0.5, 0), vec3(0,1,0) };
-	triangle.vertices[2] = { vec3(2, -0.5, 1), vec3(0,0,1) };
+	triangle.vertices[0] = { vec3(0, 0, 4.0), vec3(1,0,0) };
+	triangle.vertices[1] = { vec3(-1, -0.7, 0), vec3(0,1,0) };
+	triangle.vertices[2] = { vec3(1, -0.7, 0), vec3(0,0,1) };
 
 	vector<Triangle> triangles(1, triangle);
-	
+
 	// set mvp matrix
 	mat4 model = mat4(1.0);
 	mat4 view = lookAt(vec3(0, 0, 3), vec3(0, 0, 0), vec3(0, 1, 0));
@@ -166,7 +182,7 @@ int main()
 	mat4 mvp = projection * view * model;
 	
 	// geometry process
-	vector<Triangle> screenTriangles = geometryProcess(triangles, mvp, width, height);
+	vector<TriangleP> screenTriangles = geometryProcess(triangles, model, view, projection, width, height);
 
 	// rasterization and pix process
 	rasterize(screenTriangles, frameBuffer);
