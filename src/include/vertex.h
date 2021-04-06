@@ -30,14 +30,16 @@ using Triangle = TriangleT<Vertex>;
 using TriangleP = TriangleT<VertexP>;
 
 template<typename VertexT>
-VertexT interpolate(const VertexT& A, const VertexT& B, float t) {
+VertexT interpolate(const VertexT& A, const VertexT& B, float t)
+{
 	auto pos = A.position + (B.position - A.position) * t;
 	auto color = A.color + (B.color - A.color) * t;
 	return { pos, color };
 }
 
 template<typename VertexT>
-void assignData(VertexT* output, const VertexT* input, const size_t n) {
+void assignData(VertexT* output, const VertexT* input, const size_t n)
+{
 	for (size_t i = 0; i < n; i++) {
 		output[i] = input[i];
 	}
